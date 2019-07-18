@@ -659,8 +659,6 @@ def run_experiment_here(
     )
 
     set_seed(seed)
-    from railrl.torch.pytorch_util import set_gpu_mode
-    set_gpu_mode(use_gpu, gpu_id)
     os.environ['gpu_id'] = str(gpu_id)
     run_experiment_here_kwargs = dict(
         variant=variant,

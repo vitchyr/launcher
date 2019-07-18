@@ -1,12 +1,10 @@
 import doodad as dd
-from doodad.easy_launch.launcher_util import run_experiment_here
-import torch.multiprocessing as mp
+from easy_launcher.launcher_util import run_experiment_here
 
 if __name__ == "__main__":
     import matplotlib
     matplotlib.use('agg')
 
-    mp.set_start_method('forkserver')
     args_dict = dd.get_args()
     method_call = args_dict['method_call']
     run_experiment_kwargs = args_dict['run_experiment_kwargs']

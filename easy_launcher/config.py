@@ -1,4 +1,4 @@
 try:
-    from doodad.easy_launch.config_private import *
+    from easy_launcher.config_private import *
 except ImportError:
     print("No config_private.py found.")
