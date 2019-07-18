@@ -14,7 +14,7 @@ import dateutil.tz
 import numpy as np
 
 from easy_logger import logger
-import easy_launcher.util as util
+import pythonplusplus.python_util as util
 from easy_launcher import config
 
 GitInfo = namedtuple(
@@ -457,6 +457,7 @@ def run_experiment(
         target=target,
         mode=dmode,
         mount_points=mounts,
+        python_cmd=config.PYTHON_CMD,
         args={
             'method_call': method_call,
             'output_dir': snapshot_dir_for_script,
