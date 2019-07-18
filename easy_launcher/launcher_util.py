@@ -13,9 +13,9 @@ import datetime
 import dateutil.tz
 import numpy as np
 
-from doodad.easy_launch import logger
-import doodad.easy_launch.util as util
-from doodad.launchers import config
+from easy_logger import logger
+import easy_launcher.util as util
+from easy_launcher import config
 
 GitInfo = namedtuple(
     'GitInfo',
@@ -120,8 +120,8 @@ def run_experiment(
     :param prepend_date_to_exp_prefix: If False, do not prepend the date to
     the experiment directory.
     :param use_gpu:
-    :param snapshot_mode: See railrl.core.logging.logger
-    :param snapshot_gap: See railrl.core.logging.logger
+    :param snapshot_mode: See easy_logger.logging.logger
+    :param snapshot_gap: See easy_logger.logging.logger
     :param base_log_dir: Will over
     :param sync_interval: How often to sync s3 data (in seconds).
     :param local_input_dir_to_mount_point_dict: Dictionary for doodad.
@@ -552,20 +552,6 @@ def save_experiment_data(dictionary, log_dir):
         pickle.dump(dictionary, handle, protocol=pickle.HIGHEST_PROTOCOL)
 
 
-def resume_torch_algorithm(variant):
-    from railrl.torch import pytorch_util as ptu
-    import joblib
-    load_file = variant.get('params_file', None)
-    if load_file is not None and osp.exists(load_file):
-        data = joblib.load(load_file)
-        algorithm = data['algorithm']
-        epoch = data['epoch']+1
-        use_gpu = variant['use_gpu']
-        if use_gpu and ptu.gpu_enabled():
-            algorithm.to(ptu.device)
-        algorithm.train(start_epoch=epoch + 1)
-
-
 def continue_experiment(load_experiment_dir, resume_function):
     import joblib
     path = os.path.join(load_experiment_dir, 'experiment.pkl')
@@ -616,19 +602,6 @@ def continue_experiment_simple(load_experiment_dir, resume_function):
         resume_function,
         **run_experiment_here_kwargs
     )
-
-
-def resume_torch_algorithm_simple(variant):
-    from railrl.torch import pytorch_util as ptu
-    import joblib
-    load_file = variant.get('params_file', None)
-    if load_file is not None and osp.exists(load_file):
-        data = joblib.load(load_file)
-        algorithm = data['algorithm']
-        epoch = data['epoch']+1
-        if ptu.gpu_enabled():
-            algorithm.to(ptu.device)
-        algorithm.train(start_epoch=epoch + 1)
 
 
 def run_experiment_here(
