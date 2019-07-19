@@ -6,27 +6,16 @@ import random
 import sys
 import time
 import uuid
-from collections import namedtuple
 
 import __main__ as main
 import datetime
 import dateutil.tz
 import numpy as np
+from easy_launcher.git_info import get_git_info, save_git_info
 
 from easy_logger import logger
 import pythonplusplus.python_util as util
 from easy_launcher import config
-
-GitInfo = namedtuple(
-    'GitInfo',
-    [
-        'directory',
-        'code_diff',
-        'code_diff_staged',
-        'commit_hash',
-        'branch_name',
-    ],
-)
 
 
 ec2_okayed = False
@@ -180,34 +169,7 @@ def run_experiment(
     variant['exp_prefix'] = str(exp_prefix)
     variant['instance_type'] = str(instance_type)
 
-    try:
-        import git
-        doodad_path = osp.abspath(osp.join(
-            osp.dirname(doodad.__file__),
-            os.pardir
-        ))
-        dirs = config.CODE_DIRS_TO_MOUNT + [doodad_path]
-
-        git_infos = []
-        for directory in dirs:
-            # Idk how to query these things, so I'm just doing try-catch
-            try:
-                repo = git.Repo(directory)
-                try:
-                    branch_name = repo.active_branch.name
-                except TypeError:
-                    branch_name = '[DETACHED]'
-                git_infos.append(GitInfo(
-                    directory=directory,
-                    code_diff=repo.git.diff(None),
-                    code_diff_staged=repo.git.diff('--staged'),
-                    commit_hash=repo.head.commit.hexsha,
-                    branch_name=branch_name,
-                ))
-            except git.exc.InvalidGitRepositoryError:
-                pass
-    except ImportError:
-        git_infos = None
+    git_infos = get_git_info()
     run_experiment_kwargs = dict(
         exp_prefix=exp_prefix,
         variant=variant,
@@ -457,7 +419,7 @@ def run_experiment(
         target=target,
         mode=dmode,
         mount_points=mounts,
-        python_cmd=config.PYTHON_CMD,
+        python_cmd=config.MODE_TO_PYTHON_CMD[mode],
         args={
             'method_call': method_call,
             'output_dir': snapshot_dir_for_script,
@@ -807,33 +769,7 @@ def setup_logger(
     exp_name = log_dir.split("/")[-1]
     logger.push_prefix("[%s] " % exp_name)
 
-    if git_infos is not None:
-        for (
-                directory, code_diff, code_diff_staged, commit_hash, branch_name
-        ) in git_infos:
-            if directory[-1] == '/':
-                diff_file_name = directory[1:-1].replace("/", "-") + ".patch"
-                diff_staged_file_name = (
-                        directory[1:-1].replace("/", "-") + "_staged.patch"
-                )
-            else:
-                diff_file_name = directory[1:].replace("/", "-") + ".patch"
-                diff_staged_file_name = (
-                        directory[1:].replace("/", "-") + "_staged.patch"
-                )
-            if code_diff is not None and len(code_diff) > 0:
-                with open(osp.join(log_dir, diff_file_name), "w") as f:
-                    f.write(code_diff + '\n')
-            if code_diff_staged is not None and len(code_diff_staged) > 0:
-                with open(osp.join(log_dir, diff_staged_file_name), "w") as f:
-                    f.write(code_diff_staged + '\n')
-            with open(osp.join(log_dir, "git_infos.txt"), "a") as f:
-                f.write("directory: {}".format(directory))
-                f.write('\n')
-                f.write("git hash: {}".format(commit_hash))
-                f.write('\n')
-                f.write("git branch name: {}".format(branch_name))
-                f.write('\n\n')
+    save_git_info(log_dir)
     if script_name is not None:
         with open(osp.join(log_dir, "script_name.txt"), "w") as f:
             f.write(script_name)
