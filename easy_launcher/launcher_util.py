@@ -55,7 +55,7 @@ def run_experiment(
         seed=None,
         variant=None,
         exp_id=0,
-        prepend_date_to_exp_prefix=True,
+        prepend_date_to_exp_prefix=False,
         use_gpu=False,
         gpu_id=0,
         snapshot_mode='last',
