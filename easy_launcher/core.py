@@ -12,6 +12,7 @@ import datetime
 import dateutil.tz
 import numpy as np
 from easy_launcher.git_info import get_git_info, save_git_info
+from easy_launcher.util import query_yes_no
 
 from easy_logger import logger
 import pythonplusplus.python_util as util
@@ -20,10 +21,11 @@ from easy_launcher import config
 
 ec2_okayed = False
 gpu_ec2_okayed = False
-first_sss_launch = True
+slurm_config = None
 
 import doodad.mount as mount
 from doodad.utils import REPO_DIR
+from doodad.slurm.slurm_util import SlurmConfig
 CODE_MOUNTS = [
     mount.MountLocal(local_dir=REPO_DIR, pythonpath=True),
 ]
@@ -136,7 +138,7 @@ def run_experiment(
     global ec2_okayed
     global gpu_ec2_okayed
     global target_mount
-    global first_sss_launch
+    global slurm_config
 
     """
     Sanitize inputs as needed
@@ -218,19 +220,23 @@ def run_experiment(
             assert instance_type[0] == 'g'
         if spot_price is None:
             spot_price = config.GPU_SPOT_PRICE
+        variant['docker_image'] = docker_image
     else:
         docker_image = config.DOODAD_DOCKER_IMAGE
         if instance_type is None:
             instance_type = config.INSTANCE_TYPE
         if spot_price is None:
             spot_price = config.SPOT_PRICE
-    if mode == 'sss':
+        variant['docker_image'] = docker_image
+    if mode in {'sss', 'htp'}:
         if use_gpu:
             singularity_image = config.SSS_GPU_IMAGE
         else:
             singularity_image = config.SSS_CPU_IMAGE
+        variant['singularity_image'] = singularity_image
     elif mode in ['local_singularity', 'slurm_singularity']:
         singularity_image = config.SINGULARITY_IMAGE
+        variant['singularity_image'] = singularity_image
     else:
         singularity_image = None
 
@@ -293,30 +299,42 @@ def run_experiment(
         dmode = doodad.mode.LocalSingularity(
             image=singularity_image,
             gpu=use_gpu,
+            pre_cmd=config.SINGULARITY_PRE_CMDS,
         )
-    elif mode == 'slurm_singularity' or mode == 'sss':
+    elif mode in {'slurm_singularity', 'sss', 'htp'}:
         assert time_in_mins is not None, "Must approximate/set time in minutes"
-        if use_gpu:
-            kwargs = config.SLURM_GPU_CONFIG
-        else:
-            kwargs = config.SLURM_CPU_CONFIG
+        if slurm_config is None:
+            if use_gpu:
+                slurm_config = SlurmConfig(
+                    time_in_mins=time_in_mins, **config.SLURM_GPU_CONFIG)
+            else:
+                slurm_config = SlurmConfig(
+                    time_in_mins=time_in_mins, **config.SLURM_CPU_CONFIG)
         if mode == 'slurm_singularity':
             dmode = doodad.mode.SlurmSingularity(
                 image=singularity_image,
                 gpu=use_gpu,
-                time_in_mins=time_in_mins,
                 skip_wait=skip_wait,
                 pre_cmd=config.SINGULARITY_PRE_CMDS,
-                **kwargs
+                extra_args=config.BRC_EXTRA_SINGULARITY_ARGS,
+                slurm_config=slurm_config,
+            )
+        elif mode == 'htp':
+            dmode = doodad.mode.BrcHighThroughputMode(
+                image=singularity_image,
+                gpu=use_gpu,
+                pre_cmd=config.SSS_PRE_CMDS,
+                extra_args=config.BRC_EXTRA_SINGULARITY_ARGS,
+                slurm_config=slurm_config,
+                taskfile_path_on_brc=config.TASKFILE_PATH_ON_BRC,
             )
         else:
             dmode = doodad.mode.ScriptSlurmSingularity(
                 image=singularity_image,
                 gpu=use_gpu,
-                time_in_mins=time_in_mins,
-                skip_wait=skip_wait,
                 pre_cmd=config.SSS_PRE_CMDS,
-                **kwargs
+                extra_args=config.BRC_EXTRA_SINGULARITY_ARGS,
+                slurm_config=slurm_config,
             )
     elif mode == 'ec2':
         # Do this separately in case someone does not have EC2 configured
@@ -394,14 +412,12 @@ def run_experiment(
         base_log_dir_for_script = config.OUTPUT_DIR_FOR_DOODAD_TARGET
         # The snapshot dir will be automatically created
         snapshot_dir_for_script = None
-    elif mode in ['local_singularity', 'slurm_singularity', 'sss']:
+    elif mode in ['local_singularity', 'slurm_singularity', 'sss', 'htp']:
         base_log_dir_for_script = base_log_dir
         # The snapshot dir will be automatically created
         snapshot_dir_for_script = None
         launch_locally = True
-        if mode == 'sss':
-            dmode.set_first_time(first_sss_launch)
-            first_sss_launch = False
+        if mode in {'sss', 'htp'}:
             target = config.SSS_RUN_DOODAD_EXPERIMENT_SCRIPT_PATH
     elif mode == 'here_no_doodad':
         base_log_dir_for_script = base_log_dir
@@ -439,7 +455,7 @@ def create_mounts(
         sync_interval=180,
         local_input_dir_to_mount_point_dict=None,
 ):
-    if mode == 'sss':
+    if mode in {'sss', 'htp'}:
         code_mounts = SSS_CODE_MOUNTS
         non_code_mounts = SSS_NON_CODE_MOUNTS
     else:
@@ -485,7 +501,7 @@ def create_mounts(
                            '*.jpeg', '*.patch'),
         )
 
-    elif mode in ['local', 'local_singularity', 'slurm_singularity', 'sss']:
+    elif mode in ['local', 'local_singularity', 'slurm_singularity', 'sss', 'htp']:
         # To save directly to local files (singularity does this), skip mounting
         output_mount = mount.MountLocal(
             local_dir=base_log_dir,
@@ -792,59 +808,3 @@ def reset_execution_environment():
     logger.reset()
 
 
-def create_run_experiment_multiple_seeds(n_seeds, experiment, **kwargs):
-    """
-    Run a function multiple times over different seeds and return the average
-    score.
-    :param n_seeds: Number of times to run an experiment.
-    :param experiment: A function that returns a score.
-    :param kwargs: keyword arguements to pass to experiment.
-    :return: Average score across `n_seeds`.
-    """
-
-    def run_experiment_with_multiple_seeds(variant):
-        seed = int(variant['seed'])
-        scores = []
-        for i in range(n_seeds):
-            variant['seed'] = str(seed + i)
-            scores.append(run_experiment(
-                experiment,
-                variant=variant,
-                exp_id=i,
-                mode='here',
-                **kwargs
-            ))
-        return np.mean(scores)
-
-    return run_experiment_with_multiple_seeds
-
-
-def query_yes_no(question, default="yes"):
-    """Ask a yes/no question via raw_input() and return their answer.
-    "question" is a string that is presented to the user.
-    "default" is the presumed answer if the user just hits <Enter>.
-        It must be "yes" (the default), "no" or None (meaning
-        an answer is required of the user).
-    The "answer" return value is True for "yes" or False for "no".
-    """
-    valid = {"yes": True, "y": True, "ye": True,
-             "no": False, "n": False}
-    if default is None:
-        prompt = " [y/n] "
-    elif default == "yes":
-        prompt = " [Y/n] "
-    elif default == "no":
-        prompt = " [y/N] "
-    else:
-        raise ValueError("invalid default answer: '%s'" % default)
-
-    while True:
-        sys.stdout.write(question + prompt)
-        choice = input().lower()
-        if default is not None and choice == '':
-            return valid[default]
-        elif choice in valid:
-            return valid[choice]
-        else:
-            sys.stdout.write("Please respond with 'yes' or 'no' "
-                             "(or 'y' or 'n').\n")

@@ -8,7 +8,7 @@ setup(
     license='MIT License',
     long_description=open('README.md').read(),
     install_requires=[
-        "easy-logger==0.1.0",
+        "easy-logger==0.1.0dev",
         "doodad==0.2.1dev",
         "pythonplusplus==0.1.0dev",
     ],
