@@ -12,10 +12,10 @@ import datetime
 import dateutil.tz
 import numpy as np
 from easy_launcher.git_info import get_git_info, save_git_info
-from easy_launcher.util import query_yes_no
+from easy_launcher import util
 
 from easy_logger import logger
-import pythonplusplus.python_util as util
+import pythonplusplus.python_util as ppp
 from easy_launcher import config
 
 
@@ -24,10 +24,9 @@ gpu_ec2_okayed = False
 slurm_config = None
 
 import doodad.mount as mount
-from doodad.utils import REPO_DIR
 from doodad.slurm.slurm_util import SlurmConfig
 CODE_MOUNTS = [
-    mount.MountLocal(local_dir=REPO_DIR, pythonpath=True),
+    mount.MountLocal(local_dir=util.REPO_DIR, pythonpath=True),
 ]
 for code_dir in config.CODE_DIRS_TO_MOUNT:
     CODE_MOUNTS.append(mount.MountLocal(local_dir=code_dir, pythonpath=True))
@@ -56,15 +55,16 @@ _global_launch_uuid = str(uuid.uuid4())
 
 def run_experiment(
         method_call,
+        target_script=None,
         mode='local',
-        exp_prefix='default',
+        exp_name='default',
         variant=None,
         exp_id=0,
         use_gpu=False,
         gpu_id=0,
         seed=None,
         # logger info
-        prepend_date_to_exp_prefix=False,
+        prepend_date_to_exp_name=False,
         snapshot_mode='last',
         snapshot_gap=1,
         base_log_dir=None,
@@ -97,7 +97,7 @@ def run_experiment(
         'x': 4,
         'y': 3,
     }
-    run_experiment(foo, variant, exp_prefix="my-experiment")
+    run_experiment(foo, variant, exp_name="my-experiment")
     ```
     Results are saved to
     `base_log_dir/<date>-my-experiment/<date>-my-experiment-<unique-id>`
@@ -109,11 +109,11 @@ def run_experiment(
      - 'local_docker'
      - 'ec2'
      - 'here_no_doodad': Run without doodad call
-    :param exp_prefix: name of experiment
+    :param exp_name: name of experiment
     :param seed: Seed for this specific trial.
     :param variant: Dictionary
     :param exp_id: One experiment = one variant setting + multiple seeds
-    :param prepend_date_to_exp_prefix: If False, do not prepend the date to
+    :param prepend_date_to_exp_name: If False, do not prepend the date to
     the experiment directory.
     :param use_gpu:
     :param snapshot_mode: See easy_logger.logging.logger
@@ -162,7 +162,7 @@ def run_experiment(
         else:
             base_log_dir = config.LOCAL_LOG_DIR
 
-    for key, value in util.recursive_items(variant):
+    for key, value in ppp.recursive_items(variant):
         # This check isn't really necessary, but it's to prevent myself from
         # forgetting to pass a variant through dot_map_dict_to_nested_dict.
         if "." in key:
@@ -170,17 +170,17 @@ def run_experiment(
                 "Variants should not have periods in keys. Did you mean to "
                 "convert {} into a nested dictionary?".format(key)
             )
-    variant['base_exp_prefix'] = exp_prefix
-    if prepend_date_to_exp_prefix:
-        exp_prefix = time.strftime("%y-%m-%d") + "-" + exp_prefix
-    variant['seed'] = str(seed)
+    variant['base_exp_name'] = exp_name
+    if prepend_date_to_exp_name:
+        exp_name = time.strftime("%y-%m-%d") + "-" + exp_name
+    variant['seed'] = seed
     variant['exp_id'] = str(exp_id)
-    variant['exp_prefix'] = str(exp_prefix)
+    variant['exp_name'] = str(exp_name)
     variant['instance_type'] = str(instance_type)
 
     git_infos = get_git_info()
     run_experiment_kwargs = dict(
-        exp_prefix=exp_prefix,
+        exp_name=exp_name,
         variant=variant,
         exp_id=exp_id,
         seed=seed,
@@ -204,12 +204,12 @@ def run_experiment(
     """
 
     if mode == 'ec2' or mode == 'gcp':
-        if _global_is_first_launch and not ec2_okayed and not query_yes_no(
+        if _global_is_first_launch and not ec2_okayed and not util.query_yes_no(
                 "{} costs money. Are you sure you want to run?".format(mode)
         ):
             sys.exit(1)
         if _global_is_first_launch and not gpu_ec2_okayed and use_gpu:
-            if not query_yes_no(
+            if not util.query_yes_no(
                     "{} is more expensive with GPUs. Confirm?".format(mode)
             ):
                 sys.exit(1)
@@ -272,7 +272,7 @@ def run_experiment(
         run_id, exp_id = variant["run_id"], variant["exp_id"]
         s3_log_name = "run{}/id{}".format(run_id, exp_id)
     else:
-        s3_log_name = "{}-id{}-s{}".format(exp_prefix, exp_id, seed)
+        s3_log_name = "{}-id{}-s{}".format(exp_name, exp_id, seed)
     if trial_dir_suffix is not None:
         s3_log_name = s3_log_name + "-" + trial_dir_suffix
 
@@ -354,7 +354,7 @@ def run_experiment(
             region=region,
             instance_type=instance_type,
             spot_price=spot_price,
-            s3_log_prefix=exp_prefix,
+            s3_log_prefix=exp_name,
             # Ask Vitchyr or Steven from an explanation, but basically we
             # will start just making the sub-directories within railrl rather
             # than relying on doodad to do that.
@@ -380,7 +380,7 @@ def run_experiment(
             image=docker_image,
             gpu=use_gpu,
             gcp_bucket_name=config.GCP_BUCKET_NAME,
-            gcp_log_prefix=exp_prefix,
+            gcp_log_prefix=exp_name,
             gcp_log_name="",
             num_exps=num_exps_per_instance,
             **config_kwargs
@@ -402,7 +402,7 @@ def run_experiment(
     Get the outputs
     """
     launch_locally = None
-    target = config.RUN_DOODAD_EXPERIMENT_SCRIPT_PATH
+    target = target_script or osp.join(util.REPO_DIR, 'easy_launcher/run_experiment.py')
     if mode == 'ec2':
         # Ignored since I'm setting the snapshot dir directly
         base_log_dir_for_script = None
@@ -549,7 +549,7 @@ def continue_experiment(load_experiment_dir, resume_function):
     if osp.exists(path):
         data = joblib.load(path)
         mode = data['mode']
-        exp_prefix = data['exp_prefix']
+        exp_name = data['exp_name']
         variant = data['variant']
         variant['params_file'] = load_experiment_dir + '/extra_data.pkl' # load from snapshot directory
         exp_id = data['exp_id']
@@ -565,7 +565,7 @@ def continue_experiment(load_experiment_dir, resume_function):
             run_experiment_here(
                 resume_function,
                 variant=variant,
-                exp_prefix=exp_prefix,
+                exp_name=exp_name,
                 exp_id=exp_id,
                 seed=seed,
                 use_gpu=use_gpu,
@@ -603,7 +603,7 @@ def run_experiment_here(
         use_gpu=True,
         gpu_id=0,
         # Logger params:
-        exp_prefix="default",
+        exp_name="default",
         snapshot_mode='last',
         snapshot_gap=1,
         git_infos=None,
@@ -616,7 +616,7 @@ def run_experiment_here(
     Run an experiment locally without any serialization.
     :param experiment_function: Function. `variant` will be passed in as its
     only argument.
-    :param exp_prefix: Experiment prefix for the save file.
+    :param exp_name: Experiment prefix for the save file.
     :param variant: Dictionary passed in to `experiment_function`.
     :param exp_id: Experiment ID. Should be unique across all
     experiments. Note that one experiment may correspond to multiple seeds,.
@@ -624,7 +624,7 @@ def run_experiment_here(
     :param use_gpu: Run with GPU. By default False.
     :param script_name: Name of the running script
     :param log_dir: If set, set the log directory to this. Otherwise,
-    the directory will be auto-generated based on the exp_prefix.
+    the directory will be auto-generated based on the exp_name.
     :return:
     """
     if variant is None:
@@ -633,11 +633,11 @@ def run_experiment_here(
 
     if randomize_seed or (seed is None and 'seed' not in variant):
         seed = random.randint(0, 100000)
-        variant['seed'] = str(seed)
+        variant['seed'] = seed
     reset_execution_environment()
 
     actual_log_dir = setup_logger(
-        exp_prefix=exp_prefix,
+        exp_name=exp_name,
         variant=variant,
         exp_id=exp_id,
         seed=seed,
@@ -656,7 +656,7 @@ def run_experiment_here(
         exp_id=exp_id,
         seed=seed,
         use_gpu=use_gpu,
-        exp_prefix=exp_prefix,
+        exp_name=exp_name,
         snapshot_mode=snapshot_mode,
         snapshot_gap=snapshot_gap,
         git_infos=git_infos,
@@ -672,30 +672,30 @@ def run_experiment_here(
     return experiment_function(variant)
 
 
-def create_trial_name(exp_prefix, exp_id=0, seed=0):
+def create_trial_name(exp_name, exp_id=0, seed=0):
     """
     Create a semi-unique experiment name that has a timestamp
-    :param exp_prefix:
+    :param exp_name:
     :param exp_id:
     :return:
     """
     now = datetime.datetime.now(dateutil.tz.tzlocal())
     timestamp = now.strftime('%Y_%m_%d_%H_%M_%S')
-    return "%s_%s_id%03d--s%d" % (exp_prefix, timestamp, exp_id, seed)
+    return "%s_%s_id%03d--s%d" % (exp_name, timestamp, exp_id, seed)
 
 
 def create_log_dir(
-        exp_prefix,
+        exp_name,
         exp_id=0,
         seed=0,
         base_log_dir=None,
         variant=None,
         trial_dir_suffix=None,
-        include_exp_prefix_sub_dir=True,
+        include_exp_name_sub_dir=True,
 ):
     """
     Creates and returns a unique log directory.
-    :param exp_prefix: All experiments with this prefix will have log
+    :param exp_name: All experiments with this prefix will have log
     directories be under this directory.
     :param exp_id: Different exp_ids will be in different directories.
     :return:
@@ -709,14 +709,14 @@ def create_log_dir(
         else:
             trial_name = "run{}/id{}".format(run_id, exp_id)
     else:
-        trial_name = create_trial_name(exp_prefix, exp_id=exp_id,
+        trial_name = create_trial_name(exp_name, exp_id=exp_id,
                                        seed=seed)
     if trial_dir_suffix is not None:
         trial_name = "{}-{}".format(trial_name, trial_dir_suffix)
     if base_log_dir is None:
         base_log_dir = config.LOCAL_LOG_DIR
-    if include_exp_prefix_sub_dir:
-        log_dir = osp.join(base_log_dir, exp_prefix.replace("_", "-"), trial_name)
+    if include_exp_name_sub_dir:
+        log_dir = osp.join(base_log_dir, exp_name.replace("_", "-"), trial_name)
     else:
         log_dir = osp.join(base_log_dir, trial_name)
     if osp.exists(log_dir):
@@ -726,7 +726,7 @@ def create_log_dir(
 
 
 def setup_logger(
-        exp_prefix="default",
+        exp_name="default",
         variant=None,
         text_log_file="debug.log",
         variant_log_file="variant.json",
@@ -742,10 +742,10 @@ def setup_logger(
     """
     Set up logger to have some reasonable default settings.
     Will save log output to
-        based_log_dir/exp_prefix/exp_name.
+        based_log_dir/exp_name/exp_name.
     exp_name will be auto-generated to be unique.
     If log_dir is specified, then that directory is used as the output dir.
-    :param exp_prefix: The sub-directory for this specific experiment.
+    :param exp_name: The sub-directory for this specific experiment.
     :param exp_id: The number of the specific experiment run within this
     experiment.
     :param variant:
@@ -764,7 +764,7 @@ def setup_logger(
     first_time = log_dir is None
     if first_time:
         log_dir = create_log_dir(
-            exp_prefix,
+            exp_name,
             variant=variant,
             **create_log_dir_kwargs
         )
@@ -774,7 +774,7 @@ def setup_logger(
             variant['unique_id'] = str(uuid.uuid4())
         logger.log("Variant:")
         logger.log(
-            json.dumps(util.dict_to_safe_json(variant, sort=True), indent=2)
+            json.dumps(ppp.dict_to_safe_json(variant, sort=True), indent=2)
         )
         variant_log_path = osp.join(log_dir, variant_log_file)
         logger.log_variant(variant_log_path, variant)

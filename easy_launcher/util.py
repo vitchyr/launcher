@@ -1,4 +1,9 @@
 import sys
+import os
+
+
+THIS_FILE_DIR = os.path.dirname(os.path.realpath(__file__))
+REPO_DIR = os.path.dirname(THIS_FILE_DIR)
 
 
 def query_yes_no(question, default="yes"):
