@@ -48,18 +48,23 @@ if hasattr(config, 'SSS_CODE_DIRS_TO_MOUNT'):
         )
 
 target_mount = None
+_global_target_mount = None
+_global_is_first_launch = True
+_global_n_tasks_total = 0
+_global_launch_uuid = str(uuid.uuid4())
 
 
 def run_experiment(
         method_call,
         mode='local',
         exp_prefix='default',
-        seed=None,
         variant=None,
         exp_id=0,
-        prepend_date_to_exp_prefix=False,
         use_gpu=False,
         gpu_id=0,
+        seed=None,
+        # logger info
+        prepend_date_to_exp_prefix=False,
         snapshot_mode='last',
         snapshot_gap=1,
         base_log_dir=None,
@@ -137,8 +142,10 @@ def run_experiment(
         mode = 'here_no_doodad'
     global ec2_okayed
     global gpu_ec2_okayed
-    global target_mount
     global slurm_config
+    global _global_target_mount
+    global _global_is_first_launch
+    global _global_n_tasks_total
 
     """
     Sanitize inputs as needed
@@ -165,7 +172,7 @@ def run_experiment(
             )
     variant['base_exp_prefix'] = exp_prefix
     if prepend_date_to_exp_prefix:
-        exp_prefix = time.strftime("%m-%d") + "-" + exp_prefix
+        exp_prefix = time.strftime("%y-%m-%d") + "-" + exp_prefix
     variant['seed'] = str(seed)
     variant['exp_id'] = str(exp_id)
     variant['exp_prefix'] = str(exp_prefix)
@@ -197,11 +204,11 @@ def run_experiment(
     """
 
     if mode == 'ec2' or mode == 'gcp':
-        if not ec2_okayed and not query_yes_no(
+        if _global_is_first_launch and not ec2_okayed and not query_yes_no(
                 "{} costs money. Are you sure you want to run?".format(mode)
         ):
             sys.exit(1)
-        if not gpu_ec2_okayed and use_gpu:
+        if _global_is_first_launch and not gpu_ec2_okayed and use_gpu:
             if not query_yes_no(
                     "{} is more expensive with GPUs. Confirm?".format(mode)
             ):
@@ -326,7 +333,10 @@ def run_experiment(
                 pre_cmd=config.SSS_PRE_CMDS,
                 extra_args=config.BRC_EXTRA_SINGULARITY_ARGS,
                 slurm_config=slurm_config,
-                taskfile_path_on_brc=config.TASKFILE_PATH_ON_BRC,
+                taskfile_dir_on_brc=config.TASKFILE_DIR_ON_BRC,
+                overwrite_task_script=_global_is_first_launch,
+                n_tasks_total=_global_n_tasks_total,
+                launch_id=_global_launch_uuid
             )
         else:
             dmode = doodad.mode.ScriptSlurmSingularity(
@@ -431,7 +441,7 @@ def run_experiment(
     else:
         raise NotImplementedError("Mode not supported: {}".format(mode))
     run_experiment_kwargs['base_log_dir'] = base_log_dir_for_script
-    target_mount = doodad.launch_python(
+    _global_target_mount = doodad.launch_python(
         target=target,
         mode=dmode,
         mount_points=mounts,
@@ -443,10 +453,12 @@ def run_experiment(
             'mode': mode,
         },
         use_cloudpickle=True,
-        target_mount=target_mount,
+        target_mount=_global_target_mount,
         verbose=verbose,
         launch_locally=launch_locally,
     )
+    _global_is_first_launch = False
+    _global_n_tasks_total += 1
 
 
 def create_mounts(
@@ -785,7 +797,7 @@ def setup_logger(
     exp_name = log_dir.split("/")[-1]
     logger.push_prefix("[%s] " % exp_name)
 
-    save_git_info(log_dir)
+    save_git_info(log_dir, git_infos)
     if script_name is not None:
         with open(osp.join(log_dir, "script_name.txt"), "w") as f:
             f.write(script_name)

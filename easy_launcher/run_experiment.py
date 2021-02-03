@@ -1,5 +1,5 @@
 import doodad as dd
-from easy_launcher.launcher_util import run_experiment_here
+from easy_launcher.core import run_experiment_here
 
 if __name__ == "__main__":
     import matplotlib

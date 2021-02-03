@@ -17,8 +17,7 @@ GitInfo = namedtuple(
 )
 
 
-def save_git_info(logdir):
-    git_infos = get_git_info()
+def save_git_info(logdir, git_infos):
     if git_infos is not None:
         for (
                 directory, code_diff, code_diff_staged, commit_hash, branch_name
